@@ -33,8 +33,6 @@ class URLRequestContextGetter : public net::URLRequestContextGetter {
   // shutdown. Must be called only on IO thread.
   void NotifyContextShuttingDown();
 
-  net::URLRequestJobFactory* job_factory() { return factory_->job_factory(); }
-
  private:
   friend class BrowserContext;
 

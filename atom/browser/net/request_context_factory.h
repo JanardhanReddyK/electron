@@ -19,7 +19,6 @@ class HttpAuthPreferences;
 class HttpNetworkSession;
 class ProxyConfigService;
 class URLRequestContextStorage;
-class URLRequestJobFactory;
 }  // namespace net
 
 namespace brightray {
@@ -48,7 +47,6 @@ class AtomMainRequestContextFactory
 
   // URLRequestContextGetterFactory:
   net::URLRequestContext* Create() override;
-  net::URLRequestJobFactory* job_factory() override { return job_factory_; }
 
  private:
   // Notify cookie changes on the UI thread.
@@ -67,7 +65,6 @@ class AtomMainRequestContextFactory
   content::ProtocolHandlerMap protocol_handlers_;
   content::URLRequestInterceptorScopedVector request_interceptors_;
   brightray::NetLog* net_log_;
-  net::URLRequestJobFactory* job_factory_;
 
   std::unique_ptr<net::ProxyConfigService> proxy_config_service_;
   std::unique_ptr<brightray::RequireCTDelegate> ct_delegate_;

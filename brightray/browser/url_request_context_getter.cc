@@ -131,8 +131,8 @@ URLRequestContextGetter::~URLRequestContextGetter() {
 void URLRequestContextGetter::NotifyContextShuttingDown() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  factory_.reset();
   url_request_context_ = nullptr;
+  factory_.reset();
   net::URLRequestContextGetter::NotifyContextShuttingDown();
 }
 

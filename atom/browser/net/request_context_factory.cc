@@ -13,7 +13,6 @@
 #include "atom/browser/net/atom_network_delegate.h"
 #include "atom/browser/net/atom_url_request_job_factory.h"
 #include "atom/browser/net/cookie_details.h"
-#include "atom/browser/net/http_protocol_handler.h"
 #include "atom/common/options_switches.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
@@ -61,6 +60,7 @@
 #include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_context_storage.h"
 #include "net/url_request/url_request_intercepting_job_factory.h"
+#include "net/url_request/url_request_job_factory_impl.h"
 #include "services/network/public/cpp/network_switches.h"
 
 using content::BrowserThread;
@@ -97,15 +97,10 @@ net::HttpCache::BackendFactory* CreateHttpCacheBackendFactory(
 
 std::unique_ptr<net::URLRequestJobFactory> CreateURLRequestJobFactory(
     content::ProtocolHandlerMap* protocol_handlers,
+    content::URLRequestInterceptorScopedVector request_interceptors,
     net::HostResolver* host_resolver) {
   std::unique_ptr<AtomURLRequestJobFactory> job_factory(
       new AtomURLRequestJobFactory);
-
-  for (auto& it : *protocol_handlers) {
-    job_factory->SetProtocolHandler(it.first,
-                                    base::WrapUnique(it.second.release()));
-  }
-  protocol_handlers->clear();
 
   job_factory->SetProtocolHandler(url::kAboutScheme,
                                   base::WrapUnique(new AboutProtocolHandler));
@@ -118,20 +113,28 @@ std::unique_ptr<net::URLRequestJobFactory> CreateURLRequestJobFactory(
               {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
                base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}))));
   job_factory->SetProtocolHandler(
-      url::kHttpScheme,
-      base::WrapUnique(new HttpProtocolHandler(url::kHttpScheme)));
-  job_factory->SetProtocolHandler(
-      url::kHttpsScheme,
-      base::WrapUnique(new HttpProtocolHandler(url::kHttpsScheme)));
-  job_factory->SetProtocolHandler(
-      url::kWsScheme,
-      base::WrapUnique(new HttpProtocolHandler(url::kWsScheme)));
-  job_factory->SetProtocolHandler(
-      url::kWssScheme,
-      base::WrapUnique(new HttpProtocolHandler(url::kWssScheme)));
-  job_factory->SetProtocolHandler(
       url::kFtpScheme, net::FtpProtocolHandler::Create(host_resolver));
 
+  // Set up interceptors in the reverse order.
+  auto job_factory_impl = std::make_unique<net::URLRequestJobFactoryImpl>();
+  for (auto& it : *protocol_handlers) {
+    job_factory_impl->SetProtocolHandler(it.first,
+                                         base::WrapUnique(it.second.release()));
+  }
+  protocol_handlers->clear();
+
+  std::unique_ptr<net::URLRequestJobFactory> top_job_factory =
+      std::move(job_factory_impl);
+  if (!request_interceptors.empty()) {
+    for (auto it = request_interceptors.rbegin();
+         it != request_interceptors.rend(); ++it) {
+      top_job_factory.reset(new net::URLRequestInterceptingJobFactory(
+          std::move(top_job_factory), std::move(*it)));
+    }
+    request_interceptors.clear();
+  }
+
+  job_factory->Chain(std::move(top_job_factory));
   return std::move(job_factory);
 }
 
@@ -152,7 +155,6 @@ AtomMainRequestContextFactory::AtomMainRequestContextFactory(
       user_agent_(user_agent),
       cookieable_schemes_(cookieable_schemes),
       request_interceptors_(std::move(request_interceptors)),
-      job_factory_(nullptr),
       browser_context_(browser_context),
       weak_ptr_factory_(this) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -368,22 +370,9 @@ net::URLRequestContext* AtomMainRequestContextFactory::Create() {
 
   std::unique_ptr<net::URLRequestJobFactory> job_factory =
       CreateURLRequestJobFactory(&protocol_handlers_,
+                                 std::move(request_interceptors_),
                                  url_request_context_->host_resolver());
-  job_factory_ = job_factory.get();
-
-  // Set up interceptors in the reverse order.
-  std::unique_ptr<net::URLRequestJobFactory> top_job_factory =
-      std::move(job_factory);
-  if (!request_interceptors_.empty()) {
-    for (auto it = request_interceptors_.rbegin();
-         it != request_interceptors_.rend(); ++it) {
-      top_job_factory.reset(new net::URLRequestInterceptingJobFactory(
-          std::move(top_job_factory), std::move(*it)));
-    }
-    request_interceptors_.clear();
-  }
-
-  storage_->set_job_factory(std::move(top_job_factory));
+  storage_->set_job_factory(std::move(job_factory));
 
   return url_request_context_.get();
 }
